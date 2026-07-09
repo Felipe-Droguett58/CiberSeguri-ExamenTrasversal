@@ -1,32 +1,54 @@
 import sys
 import importlib
 import importlib.util
+import os
 
-# PATCH PARA PYTHON 3.14+
+# PATCH COMPLETO PARA PYTHON 3.14+
 # Flask 2.3.2 usa pkgutil.get_loader() que fue eliminado en Python 3.14
 if sys.version_info >= (3, 14):
     import pkgutil
     
-    # Crear una función get_loader alternativa
+    # Crear una función get_loader alternativa más robusta
     def _get_loader_alternative(module_name):
         """Alternativa a pkgutil.get_loader para Python 3.14+"""
         try:
+            # Intentar obtener el spec del módulo
+            if module_name == '__main__':
+                # Para __main__, intentar obtener el spec del módulo principal
+                import __main__
+                if hasattr(__main__, '__spec__') and __main__.__spec__ is not None:
+                    return __main__.__spec__.loader
+                # Si no tiene spec, intentar con sys.modules
+                if module_name in sys.modules:
+                    module = sys.modules[module_name]
+                    if hasattr(module, '__loader__'):
+                        return module.__loader__
+                # Fallback: usar find_spec con el nombre del archivo actual
+                try:
+                    spec = importlib.util.find_spec('__main__')
+                    if spec is not None and spec.loader is not None:
+                        return spec.loader
+                except:
+                    pass
+                # Último fallback: usar el loader del módulo actual
+                return importlib.util.find_spec('__main__')
+            
+            # Para otros módulos, usar find_spec
             spec = importlib.util.find_spec(module_name)
             if spec is not None and spec.loader is not None:
                 return spec.loader
             return None
-        except (ImportError, AttributeError):
+        except (ImportError, AttributeError, ValueError):
             return None
     
     # Parchear pkgutil
     if not hasattr(pkgutil, 'get_loader'):
         pkgutil.get_loader = _get_loader_alternative
-        # Usar print sin emojis para evitar problemas de encoding
         print("[PATCH] pkgutil.get_loader restaurado para Flask")
 
+# Ahora importar Flask después del parche
 from flask import Flask, request, render_template_string, session, redirect, url_for
 import sqlite3
-import os
 import hashlib
 
 app = Flask(__name__)
@@ -227,4 +249,4 @@ def admin():
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0', port=5000)
