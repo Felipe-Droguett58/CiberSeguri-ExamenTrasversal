@@ -22,8 +22,17 @@ pipeline {
                     echo Verificando Python...
                     python --version
                     
-                    echo Instalando dependencias...
-                    pip install Flask==2.2.3 bcrypt markupsafe
+                    echo Desinstalando versiones incompatibles...
+                    pip uninstall -y Flask Werkzeug || echo No habia versiones previas
+                    
+                    echo Instalando versiones compatibles con Python 3.14...
+                    pip install Werkzeug==2.2.3
+                    pip install Flask==2.2.3
+                    pip install bcrypt markupsafe
+                    
+                    echo Verificando instalacion...
+                    python -c "import flask; print('Flask version:', flask.__version__)"
+                    python -c "import werkzeug; print('Werkzeug version:', werkzeug.__version__)"
                     
                     echo ✅ Dependencias instaladas correctamente
                 '''
@@ -157,7 +166,6 @@ pipeline {
                     '''
                 }
                 
-                // Publicar reporte HTML en Jenkins
                 publishHTML([
                     reportDir: 'reports',
                     reportFiles: 'zap_report.html',
