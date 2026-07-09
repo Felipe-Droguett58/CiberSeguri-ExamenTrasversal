@@ -1,0 +1,172 @@
+name: Security Scan with OWASP ZAP
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+    # 1. Clonar el repositorio
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    # 2. Configurar Python
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    # 3. Instalar dependencias (si tienes requirements.txt)
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        # Crear requirements.txt si no existe
+        if [ ! -f requirements.txt ]; then
+          echo "Flask==2.3.2" > requirements.txt
+          echo "bcrypt==4.0.1" >> requirements.txt
+          echo "markupsafe==2.1.3" >> requirements.txt
+        fi
+        pip install -r requirements.txt
+    
+    # 4. Crear la base de datos
+    - name: Setup database
+      run: |
+        python create_db.py
+    
+    # 5. Iniciar la aplicación en background
+    - name: Start Flask application
+      run: |
+        python vulnerable_flask_app.py &
+        # Esperar a que la app esté lista
+        for i in {1..30}; do
+          if curl -s http://localhost:5000 > /dev/null; then
+            echo "App is running!"
+            break
+          fi
+          echo "Waiting for app to start... ($i/30)"
+          sleep 2
+        done
+    
+    # 6. Verificar que la app está corriendo
+    - name: Verify app is running
+      run: |
+        if curl -s http://localhost:5000 > /dev/null; then
+          echo "✅ Application is running on http://localhost:5000"
+        else
+          echo "❌ Application failed to start"
+          exit 1
+        fi
+    
+    # 7. Ejecutar OWASP ZAP Baseline Scan
+    - name: Run OWASP ZAP Baseline Scan
+      run: |
+        # Crear directorio para reportes
+        mkdir -p reports
+        
+        # Ejecutar ZAP
+        docker run -v $(pwd)/reports:/zap/wrk/:rw \
+          ghcr.io/zaproxy/zaproxy:stable \
+          zap-baseline.py \
+          -t http://localhost:5000 \
+          -r zap_report.html \
+          -J zap_report.json \
+          -z "-config api.disablekey=true" \
+          || echo "ZAP scan completed with warnings"
+        
+        # Listar archivos generados
+        ls -la reports/
+    
+    # 8. Subir el reporte HTML como artefacto
+    - name: Upload ZAP report
+      uses: actions/upload-artifact@v3
+      if: always()  # Subir incluso si el escaneo falla
+      with:
+        name: zap-security-report
+        path: |
+          reports/zap_report.html
+          reports/zap_report.json
+    
+    # 9. Mostrar resumen del escaneo
+    - name: Display scan summary
+      if: always()
+      run: |
+        if [ -f reports/zap_report.json ]; then
+          echo "=== 🔒 ZAP Security Scan Summary ==="
+          echo ""
+          # Contar vulnerabilidades por severidad
+          python -c "
+import json
+try:
+    with open('reports/zap_report.json', 'r') as f:
+        data = json.load(f)
+        alerts = data.get('site', [{}])[0].get('alerts', [])
+        
+        # Contar por severidad
+        risks = {}
+        for alert in alerts:
+            risk = alert.get('riskdesc', 'Unknown').split(' ')[0]
+            risks[risk] = risks.get(risk, 0) + 1
+        
+        print('📊 Vulnerabilities found:')
+        for risk, count in risks.items():
+            emoji = '🔴' if risk == 'High' else '🟠' if risk == 'Medium' else '🟡' if risk == 'Low' else 'ℹ️'
+            print(f'  {emoji} {risk}: {count}')
+        print('')
+        
+        if not alerts:
+            print('🎉 No vulnerabilities found!')
+        
+        # Mostrar resumen detallado
+        print('📋 Details:')
+        for alert in alerts[:5]:  # Mostrar top 5
+            risk = alert.get('riskdesc', 'Unknown')
+            name = alert.get('name', 'Unknown')
+            print(f'  - {risk}: {name}')
+            
+except Exception as e:
+    print(f'Error reading report: {e}')
+"
+        else
+          echo "⚠️ No se encontró el archivo de reporte JSON"
+        fi
+    
+    # 10. Crear issue automático si hay vulnerabilidades altas
+    - name: Create issue for high vulnerabilities
+      if: always()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          try {
+            const data = JSON.parse(fs.readFileSync('reports/zap_report.json', 'utf8'));
+            const alerts = data.site?.[0]?.alerts || [];
+            const highRisk = alerts.filter(a => a.riskdesc?.startsWith('High'));
+            
+            if (highRisk.length > 0) {
+              const issueBody = `## 🚨 Se encontraron ${highRisk.length} vulnerabilidades de alto riesgo!
+              
+              **Fecha:** ${new Date().toISOString()}
+              
+              **Vulnerabilidades encontradas:**
+              ${highRisk.map(a => `- **${a.name}**: ${a.riskdesc} - ${a.solution || 'Sin solución detallada'}`).join('\n')}
+              
+              **Reporte completo:** [Descargar aquí](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})
+              
+              **Acción recomendada:** Revisar y parchear inmediatamente.`;
+              
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `🔴 Vulnerabilidades de Alto Riesgo - ${new Date().toISOString().split('T')[0]}`,
+                body: issueBody,
+                labels: ['security', 'critical']
+              });
+            }
+          } catch(e) {
+            console.log('No se pudo crear el issue automático');
+          }
