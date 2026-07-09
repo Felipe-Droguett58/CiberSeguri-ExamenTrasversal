@@ -21,7 +21,8 @@ if sys.version_info >= (3, 14):
     # Parchear pkgutil
     if not hasattr(pkgutil, 'get_loader'):
         pkgutil.get_loader = _get_loader_alternative
-        print("✅ Parche aplicado: pkgutil.get_loader restaurado para Flask")
+        # Usar print sin emojis para evitar problemas de encoding
+        print("[PATCH] pkgutil.get_loader restaurado para Flask")
 
 from flask import Flask, request, render_template_string, session, redirect, url_for
 import sqlite3
