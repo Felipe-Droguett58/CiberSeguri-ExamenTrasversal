@@ -15,7 +15,6 @@ def get_db_connection():
     return conn
 
 
-# --- 4.4 Almacenamiento seguro de contraseñas (bcrypt) ---
 def hash_password(password):
     salt = bcrypt.gensalt()
     return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
@@ -25,7 +24,7 @@ def check_password(password, hashed):
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
 
-# --- 4.3 Protección CSRF ---
+
 def generate_csrf_token():
     if '_csrf_token' not in session:
         session['_csrf_token'] = secrets.token_hex(32)
@@ -68,7 +67,7 @@ def index():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        # --- 4.3 Validación CSRF ---
+
         validate_csrf_token()
 
         username = request.form['username']
@@ -76,12 +75,12 @@ def login():
 
         conn = get_db_connection()
 
-        # --- 4.1 Corrección de Inyección SQL: siempre consulta parametrizada ---
+
         query = "SELECT * FROM users WHERE username = ?"
         user = conn.execute(query, (username,)).fetchone()
         conn.close()
 
-        # --- 4.4 Verificación con bcrypt ---
+
         if user and check_password(password, user['password']):
             session['user_id'] = user['id']
             session['role'] = user['role']
@@ -194,10 +193,10 @@ def submit_comment():
     if 'user_id' not in session:
         return redirect(url_for('login'))
 
-    # --- 4.3 Validación CSRF ---
+
     validate_csrf_token()
 
-    # --- 4.2 Corrección de XSS: escapar el comentario antes de almacenarlo ---
+
     comment = str(escape(request.form['comment']))
     user_id = session['user_id']
 
@@ -233,7 +232,7 @@ def admin():
     ''')
 
 
-# --- 4.5 Configuración segura de producción ---
+
 if __name__ == '__main__':
     debug_mode = os.environ.get('FLASK_DEBUG', 'False') == 'True'
     app.run(debug=debug_mode, host='0.0.0.0', port=5000)
