@@ -4,8 +4,6 @@ pipeline {
     environment {
         DOCKER_IMAGE = 'ghcr.io/zaproxy/zaproxy:stable'
         APP_PORT = '5000'
-        // Usar Python 3.11 si está instalado, o el que tengas
-        PYTHON_PATH = 'python'
     }
     
     stages {
@@ -24,15 +22,8 @@ pipeline {
                     echo Verificando Python...
                     python --version
                     
-                    echo Instalando dependencias desde requirements.txt...
-                    if exist requirements.txt (
-                        pip install -r requirements.txt
-                        echo ✅ Dependencias instaladas desde requirements.txt
-                    ) else (
-                        echo ⚠️ No se encontró requirements.txt
-                        echo Instalando dependencias directamente...
-                        pip install flask==2.2.3 bcrypt markupsafe
-                    )
+                    echo Instalando dependencias...
+                    pip install Flask==2.2.3 bcrypt markupsafe
                     
                     echo ✅ Dependencias instaladas correctamente
                 '''
@@ -61,6 +52,7 @@ pipeline {
                 '''
             }
         }
+        
         stage('Start Application') {
             steps {
                 echo '🚀 Iniciando aplicación Flask...'
@@ -165,13 +157,15 @@ pipeline {
                     '''
                 }
                 
+                // Publicar reporte HTML en Jenkins
                 publishHTML([
                     reportDir: 'reports',
                     reportFiles: 'zap_report.html',
                     reportName: 'OWASP ZAP Security Report',
                     reportTitles: 'Reporte de Seguridad',
-                    keepAll: true,
-                    alwaysLinkToLastBuild: true
+                    allowMissing: true,
+                    alwaysLinkToLastBuild: true,
+                    keepAll: true
                 ])
             }
         }
@@ -205,18 +199,6 @@ pipeline {
                             echo "  🟡 Bajo: ${lowCount}"
                             echo "  ℹ️ Info: ${infoCount}"
                             echo "  📈 Total: ${alerts.size()}"
-                            
-                            // Generar resumen
-                            def summary = [
-                                high: highCount,
-                                medium: mediumCount,
-                                low: lowCount,
-                                info: infoCount,
-                                total: alerts.size(),
-                                alerts: alerts
-                            ]
-                            
-                            writeJSON file: 'reports/vulnerability_summary.json', json: summary
                         }
                     } catch (Exception e) {
                         echo "⚠️ Error al analizar resultados: ${e.getMessage()}"
@@ -230,8 +212,8 @@ pipeline {
         always {
             script {
                 echo '📦 Archivando artefactos...'
-                archiveArtifacts artifacts: 'reports/*', followSymlinks: false
-                archiveArtifacts artifacts: '*.log', followSymlinks: false
+                archiveArtifacts artifacts: 'reports/*', followSymlinks: false, allowEmptyArchive: true
+                archiveArtifacts artifacts: '*.log', followSymlinks: false, allowEmptyArchive: true
             }
             echo '📦 Reportes archivados'
             
