@@ -43,6 +43,12 @@ pipeline {
             steps {
                 echo '🗄️ Creando base de datos...'
                 bat '''
+                    echo Eliminando base de datos existente...
+                    if exist example.db (
+                        del example.db
+                        echo ✅ Base de datos eliminada
+                    )
+                    
                     echo Creando base de datos SQLite...
                     python create_db.py
                     
@@ -55,7 +61,6 @@ pipeline {
                 '''
             }
         }
-        
         stage('Start Application') {
             steps {
                 echo '🚀 Iniciando aplicación Flask...'
