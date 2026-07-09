@@ -4,8 +4,6 @@ pipeline {
     environment {
         DOCKER_IMAGE = 'ghcr.io/zaproxy/zaproxy:stable'
         APP_PORT = '5000'
-        PYTHON_PATH = 'C:\\Python39\\python.exe'  // Ajusta según tu instalación
-        WORKSPACE = '%WORKSPACE%'
     }
     
     stages {
@@ -24,8 +22,15 @@ pipeline {
                     echo Verificando Python...
                     python --version
                     
-                    echo Instalando dependencias...
-                    pip install flask bcrypt markupsafe
+                    echo Instalando dependencias desde requirements.txt...
+                    if exist requirements.txt (
+                        pip install -r requirements.txt
+                        echo ✅ Dependencias instaladas desde requirements.txt
+                    ) else (
+                        echo ⚠️ No se encontró requirements.txt
+                        echo Instalando dependencias directamente...
+                        pip install flask bcrypt markupsafe
+                    )
                     
                     echo Dependencias instaladas correctamente
                 '''
@@ -135,7 +140,6 @@ pipeline {
             steps {
                 echo '📊 Publicando reporte de seguridad...'
                 script {
-                    // Generar resumen en Windows
                     bat '''
                         echo === 📊 RESUMEN DEL ESCANEO DE SEGURIDAD === > reports\\summary.txt
                         echo Fecha: %date% %time% >> reports\\summary.txt
@@ -152,7 +156,6 @@ pipeline {
                     '''
                 }
                 
-                // Publicar reporte HTML en Jenkins
                 publishHTML([
                     reportDir: 'reports',
                     reportFiles: 'zap_report.html',
@@ -169,7 +172,6 @@ pipeline {
                 echo '📝 Analizando resultados del escaneo...'
                 script {
                     try {
-                        // Leer y analizar JSON en Windows
                         def jsonFile = readFile('reports/zap_report.json')
                         if (jsonFile) {
                             def json = readJSON text: jsonFile
@@ -195,7 +197,6 @@ pipeline {
                             echo "  ℹ️ Info: ${infoCount}"
                             echo "  📈 Total: ${alerts.size()}"
                             
-                            // Generar resumen JSON
                             def summary = [
                                 high: highCount,
                                 medium: mediumCount,
@@ -207,7 +208,6 @@ pipeline {
                             
                             writeJSON file: 'reports/vulnerability_summary.json', json: summary
                             
-                            // Generar informe en formato Markdown
                             def markdown = """
 # 📊 Reporte de Seguridad - OWASP ZAP
 
@@ -246,40 +246,10 @@ ${alerts.collect { alert ->
                 }
             }
         }
-        
-        stage('Send Summary Email') {
-            steps {
-                echo '📧 Enviando resumen por correo...'
-                script {
-                    // Enviar correo con resultados (opcional)
-                    // Necesitas instalar el plugin Email Extension
-                    def subject = "🔒 Security Scan Report - Build #${env.BUILD_NUMBER}"
-                    def body = """
-                        <h2>Reporte de Seguridad OWASP ZAP</h2>
-                        <p><strong>Build:</strong> #${env.BUILD_NUMBER}</p>
-                        <p><strong>Fecha:</strong> ${new Date()}</p>
-                        <p><strong>Repositorio:</strong> CodigoSeguro</p>
-                        <p><a href="${env.BUILD_URL}/HTML_Report">Ver Reporte Completo</a></p>
-                        <p><a href="${env.BUILD_URL}/artifact/reports/zap_report.html">Descargar Reporte HTML</a></p>
-                        <hr>
-                        <p>Este reporte fue generado automáticamente por Jenkins.</p>
-                    """
-                    
-                    // Descomentar si tienes configurado el plugin de email
-                    // emailext (
-                    //     subject: subject,
-                    //     body: body,
-                    //     to: 'equipo-seguridad@empresa.com',
-                    //     attachmentsPattern: 'reports/*.html,reports/*.json'
-                    // )
-                }
-            }
-        }
     }
     
     post {
         always {
-            // Archivar artefactos
             script {
                 echo '📦 Archivando artefactos...'
                 archiveArtifacts artifacts: 'reports/*', followSymlinks: false
@@ -287,7 +257,6 @@ ${alerts.collect { alert ->
             }
             echo '📦 Reportes archivados'
             
-            // Limpiar procesos Flask
             bat '''
                 echo Limpiando procesos de Flask...
                 taskkill /F /IM python.exe /FI "WINDOWTITLE eq Flask*" 2>nul || echo No hay procesos de Flask
@@ -296,19 +265,11 @@ ${alerts.collect { alert ->
         
         failure {
             echo '❌ El pipeline falló. Revisar los logs para más detalles.'
-            
-            // Notificación de fallo (opcional)
-            // emailext (
-            //     subject: "❌ Security Scan FAILED - Build #${env.BUILD_NUMBER}",
-            //     body: "El escaneo de seguridad falló. Revisa los logs.",
-            //     to: 'equipo-seguridad@empresa.com'
-            // )
         }
         
         success {
             echo '✅ Pipeline completado exitosamente!'
             echo '📊 Reporte disponible en: ${BUILD_URL}/HTML_Report'
-            echo '📊 Resumen disponible en: ${BUILD_URL}/artifact/reports/vulnerability_summary.json'
         }
         
         aborted {
