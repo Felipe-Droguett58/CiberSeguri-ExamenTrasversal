@@ -1,3 +1,28 @@
+import sys
+import importlib
+import importlib.util
+
+# PATCH PARA PYTHON 3.14+
+# Flask 2.3.2 usa pkgutil.get_loader() que fue eliminado en Python 3.14
+if sys.version_info >= (3, 14):
+    import pkgutil
+    
+    # Crear una función get_loader alternativa
+    def _get_loader_alternative(module_name):
+        """Alternativa a pkgutil.get_loader para Python 3.14+"""
+        try:
+            spec = importlib.util.find_spec(module_name)
+            if spec is not None and spec.loader is not None:
+                return spec.loader
+            return None
+        except (ImportError, AttributeError):
+            return None
+    
+    # Parchear pkgutil
+    if not hasattr(pkgutil, 'get_loader'):
+        pkgutil.get_loader = _get_loader_alternative
+        print("✅ Parche aplicado: pkgutil.get_loader restaurado para Flask")
+
 from flask import Flask, request, render_template_string, session, redirect, url_for
 import sqlite3
 import os
