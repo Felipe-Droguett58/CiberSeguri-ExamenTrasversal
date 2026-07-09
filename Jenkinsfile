@@ -11,7 +11,7 @@ pipeline {
             steps {
                 echo '📥 Clonando repositorio...'
                 git branch: 'main', 
-                    url: 'https://github.com/Felipe-Droguett58/CodigoSeguro.git'
+                    url: 'https://github.com/Felipe-Droguett58/CiberSeguri-ExamenTrasversal.git'
             }
         }
         
@@ -73,7 +73,7 @@ pipeline {
                         for /L %%i in (1,1,30) do (
                             curl -s -f http://localhost:%APP_PORT% >nul 2>&1
                             if !errorlevel! equ 0 (
-                                echo ✅ Aplicaci�n iniciada correctamente en http://localhost:%APP_PORT%
+                                echo ✅ Aplicación iniciada correctamente en http://localhost:%APP_PORT%
                                 goto :app_ready
                             )
                             echo Intentando conectar... (%%i/30)
@@ -151,7 +151,7 @@ pipeline {
                             echo Contenido del reporte: >> reports\\summary.txt
                             type reports\\zap_report.json >> reports\\summary.txt
                         ) else (
-                            echo ⚠️ No se encontr� el reporte JSON >> reports\\summary.txt
+                            echo ⚠️ No se encontró el reporte JSON >> reports\\summary.txt
                         )
                     '''
                 }
@@ -172,10 +172,17 @@ pipeline {
                 echo '📝 Analizando resultados del escaneo...'
                 script {
                     try {
+                        // Leer el archivo JSON de manera segura
                         def jsonFile = readFile('reports/zap_report.json')
                         if (jsonFile) {
+                            // Parsear JSON correctamente en Groovy
                             def json = readJSON text: jsonFile
-                            def alerts = json.site?.[0]?.alerts ?: []
+                            
+                            // Acceder a los alerts de manera segura
+                            def alerts = []
+                            if (json && json.site && json.site.size() > 0) {
+                                alerts = json.site[0].alerts ?: []
+                            }
                             
                             def highCount = 0
                             def mediumCount = 0
@@ -197,6 +204,7 @@ pipeline {
                             echo "  ℹ️ Info: ${infoCount}"
                             echo "  📈 Total: ${alerts.size()}"
                             
+                            // Generar resumen JSON
                             def summary = [
                                 high: highCount,
                                 medium: mediumCount,
@@ -208,12 +216,13 @@ pipeline {
                             
                             writeJSON file: 'reports/vulnerability_summary.json', json: summary
                             
+                            // Generar informe en formato Markdown
                             def markdown = """
 # 📊 Reporte de Seguridad - OWASP ZAP
 
 **Fecha**: ${new Date()}
 **Build**: #${env.BUILD_NUMBER}
-**Aplicación**: CodigoSeguro
+**Aplicación**: CiberSeguri-ExamenTrasversal
 
 ## Resumen de Vulnerabilidades
 
@@ -227,22 +236,48 @@ pipeline {
 
 ## Detalle de Vulnerabilidades
 
-${alerts.collect { alert ->
-    """
-### ${alert.name}
-- **Severidad**: ${alert.riskdesc}
-- **URL**: ${alert.url}
-- **Descripción**: ${alert.description}
+"""
+                            alerts.each { alert ->
+                                markdown += """
+### ${alert.name ?: 'Sin nombre'}
+- **Severidad**: ${alert.riskdesc ?: 'No especificada'}
+- **URL**: ${alert.url ?: 'No especificada'}
+- **Descripción**: ${alert.description ?: 'No especificada'}
 - **Solución**: ${alert.solution ?: 'No especificada'}
 ---
 """
-}.join('\n')}
-"""
+                            }
+                            
                             writeFile file: 'reports/security_report.md', text: markdown
                         }
                     } catch (Exception e) {
                         echo "⚠️ Error al analizar resultados: ${e.getMessage()}"
+                        echo "⚠️ El archivo JSON puede no existir o estar corrupto"
                     }
+                }
+            }
+        }
+        
+        stage('Send Summary Email') {
+            steps {
+                echo '📧 Resumen de resultados:'
+                script {
+                    // Mostrar resumen en consola
+                    sh '''
+                        echo "========================================="
+                        echo "📊 RESUMEN DEL ESCANEO DE SEGURIDAD"
+                        echo "========================================="
+                        echo ""
+                        if exist reports\\vulnerability_summary.json (
+                            echo "✅ Reporte de vulnerabilidades generado"
+                            echo "📁 Ubicación: reports/vulnerability_summary.json"
+                            echo "📁 Reporte HTML: reports/zap_report.html"
+                        ) else (
+                            echo "⚠️ No se generó el reporte de vulnerabilidades"
+                        )
+                        echo ""
+                        echo "========================================="
+                    '''
                 }
             }
         }
@@ -270,6 +305,7 @@ ${alerts.collect { alert ->
         success {
             echo '✅ Pipeline completado exitosamente!'
             echo '📊 Reporte disponible en: ${BUILD_URL}/HTML_Report'
+            echo '📊 Resumen disponible en: ${BUILD_URL}/artifact/reports/vulnerability_summary.json'
         }
         
         aborted {
