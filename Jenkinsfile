@@ -1,14 +1,11 @@
 pipeline {
-    agent {
-        docker {
-            image 'python:3.11-slim'
-            args '-v /var/run/docker.sock:/var/run/docker.sock'
-        }
-    }
+    agent any
     
     environment {
         DOCKER_IMAGE = 'ghcr.io/zaproxy/zaproxy:stable'
         APP_PORT = '5000'
+        // Usar Python 3.11 si está instalado, o el que tengas
+        PYTHON_PATH = 'python'
     }
     
     stages {
@@ -23,14 +20,21 @@ pipeline {
         stage('Setup Python Environment') {
             steps {
                 echo '🐍 Configurando entorno Python...'
-                sh '''
-                    echo "Verificando Python..."
+                bat '''
+                    echo Verificando Python...
                     python --version
                     
-                    echo "Instalando dependencias..."
-                    pip install -r requirements.txt
+                    echo Instalando dependencias desde requirements.txt...
+                    if exist requirements.txt (
+                        pip install -r requirements.txt
+                        echo ✅ Dependencias instaladas desde requirements.txt
+                    ) else (
+                        echo ⚠️ No se encontró requirements.txt
+                        echo Instalando dependencias directamente...
+                        pip install flask==2.2.3 bcrypt markupsafe
+                    )
                     
-                    echo "✅ Dependencias instaladas correctamente"
+                    echo ✅ Dependencias instaladas correctamente
                 '''
             }
         }
@@ -38,9 +42,16 @@ pipeline {
         stage('Setup Database') {
             steps {
                 echo '🗄️ Creando base de datos...'
-                sh '''
+                bat '''
+                    echo Creando base de datos SQLite...
                     python create_db.py
-                    echo "✅ Base de datos creada"
+                    
+                    if exist example.db (
+                        echo ✅ Base de datos creada correctamente
+                    ) else (
+                        echo ❌ Error: No se pudo crear la base de datos
+                        exit /b 1
+                    )
                 '''
             }
         }
@@ -49,32 +60,37 @@ pipeline {
             steps {
                 echo '🚀 Iniciando aplicación Flask...'
                 script {
-                    sh '''
-                        # Matar procesos previos
-                        pkill -f "vulnerable_flask_app.py" || true
+                    bat '''
+                        echo Matando procesos previos de Flask...
+                        taskkill /F /IM python.exe /FI "WINDOWTITLE eq Flask*" 2>nul || echo No hay procesos previos
                         
-                        # Iniciar la app en background
-                        nohup python vulnerable_flask_app.py > app.log 2>&1 &
+                        echo Iniciando aplicación Flask...
+                        start /B python vulnerable_flask_app.py > app.log 2>&1
                         
-                        # Esperar que la app esté lista
-                        echo "⏳ Esperando que la aplicación inicie..."
-                        for i in {1..30}; do
-                            if curl -s -f http://localhost:${APP_PORT} > /dev/null 2>&1; then
-                                echo "✅ Aplicación iniciada correctamente"
-                                break
-                            fi
-                            echo "⏳ Intentando conectar... ($i/30)"
-                            sleep 2
-                        done
+                        echo Esperando que la aplicación inicie...
+                        timeout /t 5 /nobreak >nul 2>&1 || echo Esperando...
                         
-                        # Verificar conexión
-                        if curl -s -f http://localhost:${APP_PORT} > /dev/null 2>&1; then
-                            echo "✅ Aplicación corriendo en http://localhost:${APP_PORT}"
-                        else
-                            echo "❌ No se pudo iniciar la aplicación"
-                            cat app.log
-                            exit 1
-                        fi
+                        echo Verificando conexión...
+                        set RETRIES=0
+                        :check_app
+                        curl -s -f http://localhost:%APP_PORT% >nul 2>&1
+                        if %ERRORLEVEL% EQU 0 (
+                            echo ✅ Aplicación iniciada correctamente en http://localhost:%APP_PORT%
+                            goto :app_ready
+                        )
+                        set /a RETRIES=%RETRIES%+1
+                        if %RETRIES% GEQ 30 (
+                            echo ❌ No se pudo iniciar la aplicación después de 30 intentos
+                            echo === LOGS DE LA APLICACIÓN ===
+                            type app.log
+                            exit /b 1
+                        )
+                        echo Intentando conectar... (%RETRIES%/30)
+                        timeout /t 2 /nobreak >nul 2>&1
+                        goto :check_app
+                        
+                        :app_ready
+                        echo ✅ Aplicación corriendo en http://localhost:%APP_PORT%
                     '''
                 }
             }
@@ -85,28 +101,36 @@ pipeline {
                 echo '🔍 Ejecutando escaneo de seguridad con OWASP ZAP...'
                 script {
                     try {
-                        sh '''
-                            mkdir -p reports
+                        bat '''
+                            echo Creando directorio para reportes...
+                            if not exist reports mkdir reports
                             
-                            docker run \
-                                -v $(pwd):/zap/wrk/:rw \
-                                ${DOCKER_IMAGE} \
-                                zap-baseline.py \
-                                -t http://localhost:${APP_PORT} \
-                                -r zap_report.html \
-                                -J zap_report.json \
-                                -z "-config api.disablekey=true" \
-                                || echo "⚠️ ZAP terminó con advertencias"
+                            echo Ejecutando ZAP Baseline Scan...
+                            echo Esto puede tomar varios minutos...
                             
-                            if [ -f zap_report.html ]; then
-                                cp zap_report.html reports/
-                                echo "✅ Reporte HTML generado"
-                            fi
+                            docker run ^
+                                -v "%cd%":/zap/wrk/:rw ^
+                                %DOCKER_IMAGE% ^
+                                zap-baseline.py ^
+                                -t http://host.docker.internal:%APP_PORT% ^
+                                -r zap_report.html ^
+                                -J zap_report.json ^
+                                -z "-config api.disablekey=true"
                             
-                            if [ -f zap_report.json ]; then
-                                cp zap_report.json reports/
-                                echo "✅ Reporte JSON generado"
-                            fi
+                            echo Verificando reportes generados...
+                            if exist zap_report.html (
+                                copy zap_report.html reports\\ >nul
+                                echo ✅ Reporte HTML generado
+                            ) else (
+                                echo ⚠️ No se generó el reporte HTML
+                            )
+                            
+                            if exist zap_report.json (
+                                copy zap_report.json reports\\ >nul
+                                echo ✅ Reporte JSON generado
+                            ) else (
+                                echo ⚠️ No se generó el reporte JSON
+                            )
                         '''
                     } catch (Exception e) {
                         echo "⚠️ El escaneo de ZAP no se completó completamente"
@@ -120,9 +144,19 @@ pipeline {
             steps {
                 echo '📊 Publicando reporte de seguridad...'
                 script {
-                    sh '''
-                        echo "=== 📊 RESUMEN DEL ESCANEO DE SEGURIDAD ===" > reports/summary.txt
-                        echo "Fecha: $(date)" >> reports/summary.txt
+                    bat '''
+                        echo === 📊 RESUMEN DEL ESCANEO DE SEGURIDAD === > reports\\summary.txt
+                        echo Fecha: %date% %time% >> reports\\summary.txt
+                        echo. >> reports\\summary.txt
+                        
+                        if exist reports\\zap_report.json (
+                            echo ✅ Reporte encontrado >> reports\\summary.txt
+                            echo. >> reports\\summary.txt
+                            echo Contenido del reporte: >> reports\\summary.txt
+                            type reports\\zap_report.json >> reports\\summary.txt
+                        ) else (
+                            echo ⚠️ No se encontró el reporte JSON >> reports\\summary.txt
+                        )
                     '''
                 }
                 
@@ -166,6 +200,18 @@ pipeline {
                             echo "  🟡 Bajo: ${lowCount}"
                             echo "  ℹ️ Info: ${infoCount}"
                             echo "  📈 Total: ${alerts.size()}"
+                            
+                            // Generar resumen
+                            def summary = [
+                                high: highCount,
+                                medium: mediumCount,
+                                low: lowCount,
+                                info: infoCount,
+                                total: alerts.size(),
+                                alerts: alerts
+                            ]
+                            
+                            writeJSON file: 'reports/vulnerability_summary.json', json: summary
                         }
                     } catch (Exception e) {
                         echo "⚠️ Error al analizar resultados: ${e.getMessage()}"
@@ -178,14 +224,15 @@ pipeline {
     post {
         always {
             script {
+                echo '📦 Archivando artefactos...'
                 archiveArtifacts artifacts: 'reports/*', followSymlinks: false
                 archiveArtifacts artifacts: '*.log', followSymlinks: false
             }
             echo '📦 Reportes archivados'
             
-            sh '''
-                echo "Limpiando procesos..."
-                pkill -f "vulnerable_flask_app.py" || true
+            bat '''
+                echo Limpiando procesos de Flask...
+                taskkill /F /IM python.exe /FI "WINDOWTITLE eq Flask*" 2>nul || echo No hay procesos de Flask
             '''
         }
         
