@@ -23,11 +23,11 @@ pipeline {
                     python --version
                     
                     echo Desinstalando versiones incompatibles...
-                    pip uninstall -y Flask Werkzeug || echo No habia versiones previas
+                    pip uninstall -y Flask Werkzeug Jinja2 || echo No habia versiones previas
                     
                     echo Instalando versiones compatibles con Python 3.14...
-                    pip install Werkzeug==2.2.3
-                    pip install Flask==2.2.3
+                    pip install Werkzeug==3.0.1
+                    pip install Flask==3.0.0
                     pip install bcrypt markupsafe
                     
                     echo Verificando instalacion...
